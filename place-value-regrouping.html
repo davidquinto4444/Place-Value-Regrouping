@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Place Value Disk Regrouping</title>
+  <style>
+    :root { --ink:#17324d; --line:#9bb0c4; --bg:#eef5fb; --panel:#fff; --accent:#1769aa; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Arial, Helvetica, sans-serif; color:var(--ink); background:var(--bg); }
+    main { width:min(1500px, 100%); margin:auto; padding:18px; }
+    h1 { margin:0 0 12px; text-align:center; font-size:clamp(28px,4vw,52px); }
+    .controls { background:var(--panel); border-radius:16px; padding:14px; box-shadow:0 3px 14px #28486322; }
+    .inputs { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+    label { display:flex; flex-direction:column; gap:5px; font-weight:700; text-align:center; font-size:18px; }
+    input { min-width:0; width:100%; padding:10px; border:2px solid var(--line); border-radius:10px; font-size:26px; text-align:center; color:var(--ink); }
+    .buttons { display:flex; flex-wrap:wrap; justify-content:center; gap:10px; margin-top:13px; }
+    button { border:0; border-radius:11px; padding:12px 19px; font-size:19px; font-weight:700; cursor:pointer; color:white; background:var(--accent); touch-action:manipulation; }
+    button.secondary { background:#64788c; }
+    button.danger { background:#a43c3c; }
+    button:disabled { opacity:.38; cursor:not-allowed; }
+    .status { min-height:36px; margin:12px 0 8px; text-align:center; font-size:clamp(20px,2.4vw,31px); font-weight:700; }
+    .chart { display:grid; grid-template-columns:repeat(4,1fr); min-height:420px; background:white; border:3px solid var(--ink); border-radius:14px; overflow:hidden; }
+    .column { min-width:0; border-right:3px solid var(--ink); display:flex; flex-direction:column; }
+    .column:last-child { border-right:0; }
+    .heading { padding:10px 4px; text-align:center; color:white; font-size:clamp(18px,2.5vw,30px); font-weight:800; }
+    .column[data-place="1000"] .heading { background:#7451a6; }
+    .column[data-place="100"] .heading { background:#2675b8; }
+    .column[data-place="10"] .heading { background:#2d8b57; }
+    .column[data-place="1"] .heading { background:#c0602c; }
+    .count { padding:7px; text-align:center; font-size:clamp(21px,2.6vw,34px); font-weight:800; background:#f5f8fa; border-bottom:2px solid var(--line); }
+    .disks { flex:1; display:grid; grid-template-columns:repeat(5,minmax(24px,62px)); grid-auto-rows:max-content; align-content:start; justify-content:center; gap:8px; padding:12px 6px; overflow:auto; }
+    .disk { width:100%; aspect-ratio:1; border:3px solid currentColor; border-radius:50%; display:grid; place-items:center; font-size:clamp(12px,1.65vw,21px); font-weight:800; background:white; box-shadow:0 2px 4px #0002; animation:pop .24s ease-out; }
+    .disk.selected { outline:5px solid #ffd23f; outline-offset:1px; transform:scale(1.08); box-shadow:0 0 15px #f0a500; }
+    .flying-disk { position:fixed; z-index:9999; margin:0; pointer-events:none; }
+    .column[data-place="1000"] .disk { color:#7451a6; background:#eee7fa; }
+    .column[data-place="100"] .disk { color:#1764a3; background:#e4f2ff; }
+    .column[data-place="10"] .disk { color:#227547; background:#e3f6ea; }
+    .column[data-place="1"] .disk { color:#a94b1d; background:#fff0e5; }
+    .value { margin-top:12px; padding:10px; text-align:center; font-size:clamp(22px,3vw,38px); font-weight:800; }
+    .equation { color:#38566f; font-size:.72em; margin-top:4px; }
+    @keyframes pop { from { transform:scale(.5); opacity:0; } }
+    @media (max-width:700px) {
+      main { padding:8px; } .inputs { grid-template-columns:repeat(2,1fr); }
+      .chart { min-height:390px; } .disks { gap:4px; padding:8px 3px; } .disk { font-size:11px; border-width:2px; }
+      button { flex:1 1 44%; }
+    }
+    @media print { .controls { display:none; } body { background:white; } main { width:100%; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Place Value Disk Regrouping</h1>
+  <section class="controls">
+    <div class="inputs">
+      <label>Thousands<input id="i1000" type="number" min="0" max="999" value="0"></label>
+      <label>Hundreds<input id="i100" type="number" min="0" max="999" value="0"></label>
+      <label>Tens<input id="i10" type="number" min="0" max="999" value="34"></label>
+      <label>Ones<input id="i1" type="number" min="0" max="999" value="0"></label>
+    </div>
+    <div class="buttons">
+      <button id="show">Show Disks</button>
+      <button id="one">Regroup 10 Tens</button>
+      <button id="all">Regroup All</button>
+      <button id="undo" class="secondary">Undo</button>
+      <button id="reset" class="danger">Reset</button>
+    </div>
+  </section>
+  <div id="status" class="status" aria-live="polite">34 tens can be regrouped.</div>
+  <section id="chart" class="chart" aria-label="Place value chart"></section>
+  <section class="value">
+    Total value: <span id="total">340</span>
+    <div id="expanded" class="equation">34 tens = 340</div>
+  </section>
+</main>
+<script>
+  const places=[1000,100,10,1], names={1000:'Thousands',100:'Hundreds',10:'Tens',1:'Ones'};
+  let counts={1000:0,100:0,10:34,1:0}, history=[], busy=false;
+  const chart=document.querySelector('#chart'), status=document.querySelector('#status');
+  const clean=v=>Math.max(0,Math.min(999,Math.floor(Number(v)||0)));
+  function snapshot(){ return {...counts}; }
+  function total(){ return places.reduce((s,p)=>s+counts[p]*p,0); }
+  function equation(){
+    const parts=places.filter(p=>counts[p]).map(p=>`${counts[p]} ${names[p].toLowerCase()}`);
+    return `${parts.length?parts.join(' + '):'0 disks'} = ${total().toLocaleString()}`;
+  }
+  function canRegroup(){ return [1,10,100].some(p=>counts[p]>=10); }
+  function render(message){
+    chart.innerHTML='';
+    for(const p of places){
+      const col=document.createElement('div'); col.className='column'; col.dataset.place=p;
+      const head=document.createElement('div'); head.className='heading'; head.textContent=names[p];
+      const unit=counts[p]===1 ? names[p].slice(0,-1).toLowerCase() : names[p].toLowerCase();
+      const count=document.createElement('div'); count.className='count'; count.textContent=`${counts[p]} ${unit}`;
+      const disks=document.createElement('div'); disks.className='disks';
+      const shown=Math.min(counts[p],80);
+      for(let n=0;n<shown;n++){ const d=document.createElement('div'); d.className='disk'; d.textContent=p.toLocaleString(); disks.append(d); }
+      if(counts[p]>shown){ const more=document.createElement('div'); more.className='disk'; more.textContent=`+${counts[p]-shown}`; disks.append(more); }
+      col.append(head,count,disks); chart.append(col);
+    }
+    document.querySelector('#total').textContent=total().toLocaleString();
+    document.querySelector('#expanded').textContent=equation();
+    status.textContent=message ?? (canRegroup()?'There is at least one group of 10 to exchange.':'No more groups of 10.');
+    const nextPlace=[1,10,100].find(p=>counts[p]>=10);
+    const oneButton=document.querySelector('#one');
+    oneButton.textContent=nextPlace ? `Regroup 10 ${names[nextPlace]}` : 'No Group of 10 to Regroup';
+    document.querySelector('#show').disabled=busy;
+    oneButton.disabled=busy||!canRegroup(); document.querySelector('#all').disabled=busy||!canRegroup(); document.querySelector('#undo').disabled=busy||!history.length;
+    document.querySelector('#reset').disabled=busy;
+  }
+  function loadInputs(){
+    history=[]; for(const p of places) counts[p]=clean(document.querySelector(`#i${p}`).value);
+    render(canRegroup()?'Ready to regroup.':'No groups of 10 yet.');
+  }
+  const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  async function animateExchange(p){
+    busy=true; render(`Find 10 ${names[p].toLowerCase()} disks: two complete rows of five.`);
+    const source=document.querySelector(`.column[data-place="${p}"] .disks`);
+    const target=document.querySelector(`.column[data-place="${p*10}"] .disks`);
+    const chosen=[...source.querySelectorAll('.disk')].slice(0,10);
+    chosen.forEach(d=>d.classList.add('selected'));
+    await pause(900);
+    status.textContent=`Move the group of 10 to the ${names[p*10].toLowerCase()} column.`;
+    const targetBox=target.getBoundingClientRect();
+    const tx=targetBox.left+targetBox.width/2, ty=targetBox.top+55;
+    const animations=chosen.map((d,i)=>{
+      const box=d.getBoundingClientRect(), clone=d.cloneNode(true);
+      clone.className=d.className+' flying-disk';
+      Object.assign(clone.style,{left:`${box.left}px`,top:`${box.top}px`,width:`${box.width}px`,height:`${box.height}px`});
+      document.body.append(clone); d.style.visibility='hidden';
+      const dx=tx-(box.left+box.width/2)+(i%2?8:-8), dy=ty-(box.top+box.height/2)+(i%5-2)*3;
+      return clone.animate([
+        {transform:'translate(0,0) scale(1)',opacity:1},
+        {transform:`translate(${dx*.75}px,${dy*.75}px) scale(.75)`,opacity:1,offset:.7},
+        {transform:`translate(${dx}px,${dy}px) scale(.18)`,opacity:.15}
+      ],{duration:1200,easing:'ease-in-out',fill:'forwards'}).finished.then(()=>clone.remove());
+    });
+    await Promise.all(animations);
+    counts[p]-=10; counts[p*10]+=1; busy=false;
+    render(`10 ${names[p].toLowerCase()} became 1 ${names[p*10].slice(0,-1).toLowerCase()}. The total value stayed the same.`);
+    await pause(500);
+  }
+  async function regroupOne(){
+    const p=[1,10,100].find(x=>counts[x]>=10); if(!p||busy)return;
+    history.push(snapshot()); await animateExchange(p);
+  }
+  async function regroupAll(){
+    if(busy||!canRegroup())return;
+    history.push(snapshot()); const before=equation().split(' = ')[0];
+    while(canRegroup()){ const p=[1,10,100].find(x=>counts[x]>=10); await animateExchange(p); }
+    status.textContent=`${before} is now completely regrouped. The value did not change.`;
+  }
+  document.querySelector('#show').onclick=loadInputs;
+  document.querySelector('#one').onclick=regroupOne;
+  document.querySelector('#all').onclick=regroupAll;
+  document.querySelector('#undo').onclick=()=>{ if(history.length){ counts=history.pop(); render('The last regrouping was undone.'); } };
+  document.querySelector('#reset').onclick=()=>{ history=[]; counts={1000:0,100:0,10:0,1:0}; for(const p of places) document.querySelector(`#i${p}`).value=0; render('Enter disk counts above.'); };
+  render();
+</script>
+</body>
+</html>
